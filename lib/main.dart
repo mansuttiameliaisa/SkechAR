@@ -184,15 +184,14 @@ class _DrawingScreenState extends State<DrawingScreen> {
   bool _loading = false;
   String? _error;
 
-  @override
-  void initState() {
-    super.initState();
-    _initializeCamera();
-  }
+  List<CameraDescription> _cameras = const [];
+  CameraDescription? _selectedCamera;
 
-  Future<void> _initializeCamera() async {
+  Future<void> _initializeCamera({CameraDescription? target}) async {
     if (_loading) return;
+    final previousController = _controller;
     setState(() {
+      _controller = null;
       _loading = true;
       _error = null;
     });
@@ -200,15 +199,22 @@ class _DrawingScreenState extends State<DrawingScreen> {
     CameraController? pendingController;
     String? error;
     try {
-      final cameras = await availableCameras();
+      if (previousController != null) {
+        await _disposeCamera(previousController);
+      }
       if (!mounted) return;
+      final cameras = target == null ? await availableCameras() : _cameras;
+      if (!mounted) return;
+      _cameras = cameras;
       if (cameras.isEmpty) {
         error = 'No se encontró ninguna cámara en este dispositivo.';
       } else {
-        final camera = cameras.firstWhere(
-          (camera) => camera.lensDirection == CameraLensDirection.back,
-          orElse: () => cameras.first,
-        );
+        final camera =
+            target ??
+            cameras.firstWhere(
+              (camera) => camera.lensDirection == CameraLensDirection.back,
+              orElse: () => cameras.first,
+            );
         pendingController = CameraController(
           camera,
           ResolutionPreset.high,
@@ -216,6 +222,7 @@ class _DrawingScreenState extends State<DrawingScreen> {
         );
         await pendingController.initialize();
         if (!mounted) return;
+        _selectedCamera = camera;
         _controller = pendingController;
         pendingController = null;
       }
@@ -256,12 +263,43 @@ class _DrawingScreenState extends State<DrawingScreen> {
     }
   }
 
+  void _switchCamera() {
+    if (_loading || _cameras.length < 2) return;
+    final index = _cameras.indexOf(_selectedCamera ?? _cameras.first);
+    final next = _cameras[(index + 1) % _cameras.length];
+    final opposite = _selectedCamera?.lensDirection == CameraLensDirection.back
+        ? CameraLensDirection.front
+        : CameraLensDirection.back;
+    final target = _cameras.length > 2
+        ? _cameras.firstWhere(
+            (camera) =>
+                camera.lensDirection == opposite && camera != _selectedCamera,
+            orElse: () => next,
+          )
+        : next;
+    _initializeCamera(target: target);
+  }
+
   Future<void> _pickImage() async {
-    final image = await _picker.pickImage(source: ImageSource.gallery);
-    if (image == null || !mounted) return;
-    final bytes = await image.readAsBytes();
-    if (!mounted) return;
-    setState(() => _selectedImage = bytes);
+    try {
+      final image = await _picker.pickImage(source: ImageSource.gallery);
+      if (image == null || !mounted) return;
+      final bytes = await image.readAsBytes();
+      if (!mounted) return;
+      setState(() {
+        _selectedImage = bytes;
+        _scale = 1;
+        _imagePosition = Offset.zero;
+      });
+    } catch (exception) {
+      debugPrint('Imagen: $exception');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo abrir la imagen. Elige otro archivo.'),
+        ),
+      );
+    }
   }
 
   @override
@@ -272,36 +310,11 @@ class _DrawingScreenState extends State<DrawingScreen> {
   }
 
   Widget _buildDrawingArea() {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
     final controller = _controller;
-    if (controller == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(25),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _error ?? 'No se pudo abrir la cámara.',
-                textAlign: TextAlign.center,
-              ),
-              TextButton(
-                onPressed: _initializeCamera,
-                child: const Text('Reintentar'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
     return Stack(
       fit: StackFit.expand,
       children: [
-        CameraPreview(controller),
+        if (controller != null) CameraPreview(controller),
         if (_selectedImage != null)
           Positioned.fill(
             child: GestureDetector(
@@ -329,10 +342,41 @@ class _DrawingScreenState extends State<DrawingScreen> {
                         _selectedImage!,
                         width: 250,
                         fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) => const Text(
+                          'No se pudo mostrar la imagen. Prueba con JPG o PNG.',
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                     ),
                   ),
                 ),
+              ),
+            ),
+          ),
+        if (controller == null)
+          Positioned(
+            top: 12,
+            left: 16,
+            right: 16,
+            child: SafeArea(
+              bottom: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_loading)
+                    const LinearProgressIndicator()
+                  else ...[
+                    if (_error case final error?)
+                      Text(error, textAlign: TextAlign.center),
+                    TextButton.icon(
+                      onPressed: () => _initializeCamera(),
+                      icon: const Icon(Icons.videocam_outlined),
+                      label: Text(
+                        _error == null ? 'Activar cámara' : 'Reintentar cámara',
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
@@ -368,7 +412,7 @@ class _DrawingScreenState extends State<DrawingScreen> {
                 ),
                 Slider(
                   value: _opacity,
-                  min: 0.1,
+                  min: 0,
                   max: 1,
                   activeColor: const Color(0xFFB69ACF),
                   onChanged: (value) => setState(() => _opacity = value),
@@ -387,6 +431,14 @@ class _DrawingScreenState extends State<DrawingScreen> {
       backgroundColor: const Color(0xFFF7F4EF),
       appBar: AppBar(
         title: const Text('Mi espacio de dibujo'),
+        actions: [
+          if (_cameras.length > 1)
+            IconButton(
+              tooltip: 'Cambiar cámara',
+              onPressed: _loading ? null : _switchCamera,
+              icon: const Icon(Icons.cameraswitch_outlined),
+            ),
+        ],
         backgroundColor: const Color(0xFFF7F4EF),
       ),
       body: _buildDrawingArea(),

@@ -1,4 +1,8 @@
-import 'package:flutter/material.dart';
+import 'dart:typed_data';
+
+import 'package:camera/camera.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:material_ui/material_ui.dart';
 
 void main() {
   runApp(const SketchAR());
@@ -15,9 +19,7 @@ class SketchAR extends StatelessWidget {
       theme: ThemeData(
         scaffoldBackgroundColor: const Color(0xFFF7F4EF),
         fontFamily: 'Arial',
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFDCCFEA),
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFDCCFEA)),
       ),
       home: const HomeScreen(),
     );
@@ -51,10 +53,7 @@ class HomeScreen extends StatelessWidget {
 
               const Text(
                 'Tu creatividad, sin límites.',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Color(0xFF77717B),
-                ),
+                style: TextStyle(fontSize: 16, color: Color(0xFF77717B)),
               ),
 
               const Spacer(),
@@ -92,16 +91,15 @@ class HomeScreen extends StatelessWidget {
                 width: double.infinity,
                 height: 58,
                 child: ElevatedButton(
-                  onPressed: () {},
-                  style: ElevatedBuonPressed: () {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (context) => const DrawingScreen(),
-    ),
-  );
-},
-tton.styleFrom(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const DrawingScreen(),
+                      ),
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFDCCFEA),
                     foregroundColor: const Color(0xFF39353D),
                     elevation: 0,
@@ -111,10 +109,7 @@ tton.styleFrom(
                   ),
                   child: const Text(
                     'Comenzar a dibujar',
-                    style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
@@ -125,20 +120,17 @@ tton.styleFrom(
                 width: double.infinity,
                 height: 58,
                 child: OutlinedButton(
-  onPressed: () {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (context) => const DrawingScreen(),
-    ),
-  );
-},
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const DrawingScreen(),
+                      ),
+                    );
+                  },
                   style: OutlinedButton.styleFrom(
                     foregroundColor: const Color(0xFF39353D),
-                    side: const BorderSide(
-                      color: Color(0xFFDCCFEA),
-                      width: 2,
-                    ),
+                    side: const BorderSide(color: Color(0xFFDCCFEA), width: 2),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(18),
                     ),
@@ -157,10 +149,7 @@ tton.styleFrom(
                   onPressed: () {},
                   child: const Text(
                     'Aprender',
-                    style: TextStyle(
-                      color: Color(0xFF77717B),
-                      fontSize: 16,
-                    ),
+                    style: TextStyle(color: Color(0xFF77717B), fontSize: 16),
                   ),
                 ),
               ),
@@ -174,8 +163,223 @@ tton.styleFrom(
   }
 }
 
-class DrawingScreen extends StatelessWidget {
+class DrawingScreen extends StatefulWidget {
   const DrawingScreen({super.key});
+
+  @override
+  State<DrawingScreen> createState() => _DrawingScreenState();
+}
+
+class _DrawingScreenState extends State<DrawingScreen> {
+  final ImagePicker _picker = ImagePicker();
+  Uint8List? _selectedImage;
+  double _opacity = 0.5;
+  double _scale = 1;
+  Offset _imagePosition = Offset.zero;
+  Offset _initialPosition = Offset.zero;
+  Offset _initialFocalPoint = Offset.zero;
+  double _initialScale = 1;
+
+  CameraController? _controller;
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeCamera();
+  }
+
+  Future<void> _initializeCamera() async {
+    if (_loading) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    CameraController? pendingController;
+    String? error;
+    try {
+      final cameras = await availableCameras();
+      if (!mounted) return;
+      if (cameras.isEmpty) {
+        error = 'No se encontró ninguna cámara en este dispositivo.';
+      } else {
+        final camera = cameras.firstWhere(
+          (camera) => camera.lensDirection == CameraLensDirection.back,
+          orElse: () => cameras.first,
+        );
+        pendingController = CameraController(
+          camera,
+          ResolutionPreset.high,
+          enableAudio: false,
+        );
+        await pendingController.initialize();
+        if (!mounted) return;
+        _controller = pendingController;
+        pendingController = null;
+      }
+    } on CameraException catch (exception) {
+      error = switch (exception.code) {
+        'CameraAccessDenied' || 'CameraAccessDeniedWithoutPrompt' => 'Permite el acceso a la cámara en los ajustes del sitio o del dispositivo y vuelve a intentarlo.',
+        'CameraAccessRestricted' =>
+          'El acceso a la cámara está restringido en este dispositivo.',
+        'cameraNotFound' ||
+        'NotFoundError' => 'No se encontró ninguna cámara en este dispositivo.',
+        'cameraNotReadable' => 'La cámara no está disponible. Cierra cualquier aplicación que la esté usando y vuelve a intentarlo.',
+        'cameraNotSupported' || 'cameraType' || 'cameraSecurity' =>
+          'Abre SketchAR directamente en un navegador compatible usando HTTPS.',
+        _ => 'No se pudo abrir la cámara. Vuelve a intentarlo.',
+      };
+      debugPrint('Cámara: ${exception.code}');
+    } catch (exception) {
+      error = 'No se pudo abrir la cámara. En la web, abre SketchAR usando HTTPS o localhost.';
+      debugPrint('Cámara: $exception');
+    } finally {
+      if (pendingController != null) {
+        await _disposeCamera(pendingController);
+      }
+      if (mounted) {
+        setState(() {
+          _error = error;
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _disposeCamera(CameraController controller) async {
+    try {
+      await controller.dispose();
+    } catch (exception) {
+      debugPrint('No se pudo liberar la cámara: $exception');
+    }
+  }
+
+  Future<void> _pickImage() async {
+    final image = await _picker.pickImage(source: ImageSource.gallery);
+    if (image == null || !mounted) return;
+    final bytes = await image.readAsBytes();
+    if (!mounted) return;
+    setState(() => _selectedImage = bytes);
+  }
+
+  @override
+  void dispose() {
+    final controller = _controller;
+    if (controller != null) _disposeCamera(controller);
+    super.dispose();
+  }
+
+  Widget _buildDrawingArea() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final controller = _controller;
+    if (controller == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(25),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _error ?? 'No se pudo abrir la cámara.',
+                textAlign: TextAlign.center,
+              ),
+              TextButton(
+                onPressed: _initializeCamera,
+                child: const Text('Reintentar'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        CameraPreview(controller),
+        if (_selectedImage != null)
+          Positioned.fill(
+            child: GestureDetector(
+              onScaleStart: (details) {
+                _initialPosition = _imagePosition;
+                _initialFocalPoint = details.localFocalPoint;
+                _initialScale = _scale;
+              },
+              onScaleUpdate: (details) {
+                setState(() {
+                  _scale = (_initialScale * details.scale).clamp(0.3, 4.0);
+                  _imagePosition =
+                      _initialPosition +
+                      (details.localFocalPoint - _initialFocalPoint);
+                });
+              },
+              child: Center(
+                child: Transform.translate(
+                  offset: _imagePosition,
+                  child: Transform.scale(
+                    scale: _scale,
+                    child: Opacity(
+                      opacity: _opacity,
+                      child: Image.memory(
+                        _selectedImage!,
+                        width: 250,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          bottom: 25,
+          left: 20,
+          right: 20,
+          child: ElevatedButton.icon(
+            onPressed: _pickImage,
+            icon: const Icon(Icons.image),
+            label: const Text('Elegir imagen'),
+          ),
+        ),
+        Positioned(
+          bottom: 95,
+          left: 25,
+          right: 25,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF7F4EF),
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Transparencia',
+                  style: TextStyle(
+                    color: Color(0xFF39353D),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Slider(
+                  value: _opacity,
+                  min: 0.1,
+                  max: 1,
+                  activeColor: const Color(0xFFB69ACF),
+                  onChanged: (value) => setState(() => _opacity = value),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -185,16 +389,7 @@ class DrawingScreen extends StatelessWidget {
         title: const Text('Mi espacio de dibujo'),
         backgroundColor: const Color(0xFFF7F4EF),
       ),
-      body: const Center(
-        child: Text(
-          'Aquí comenzará tu experiencia SketchAR',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 20,
-            color: Color(0xFF39353D),
-          ),
-        ),
-      ),
+      body: _buildDrawingArea(),
     );
   }
 }
